@@ -20,7 +20,7 @@ namespace small_point_lio {
             estimator.kf.x.offset_R_L_I = parameters.extrinsic_R.cast<state::value_type>();
         }
         Q = estimator.process_noise_cov();
-        estimator.G_m_s2 = parameters.gravity.norm();
+        estimator.imu_acceleration_scale = parameters.gravity.norm() / parameters.acc_norm;
 
         // init data
         reset();
@@ -56,9 +56,12 @@ namespace small_point_lio {
                     for (const auto &imu_msg: preprocess.imu_deque) {
                         estimator.kf.x.gravity += imu_msg.linear_acceleration.cast<state::value_type>();
                     }
-                    double scale = -parameters.gravity.norm() / estimator.kf.x.gravity.norm();
+                    state::value_type scale = -static_cast<state::value_type>(parameters.gravity.norm()) / estimator.kf.x.gravity.norm();
                     estimator.kf.x.gravity *= scale;
+                } else {
+                    estimator.kf.x.gravity = parameters.gravity.cast<state::value_type>();
                 }
+                estimator.kf.x.acceleration = -estimator.kf.x.gravity;
                 // init time
                 if (preprocess.point_deque.empty()) {
                     time_current = preprocess.imu_deque.back().timestamp;
@@ -67,8 +70,7 @@ namespace small_point_lio {
                 } else {
                     time_current = std::max(preprocess.point_deque.back().timestamp, preprocess.imu_deque.back().timestamp);
                 }
-                time_predict_last = time_current;
-                time_update_last = time_current;
+                estimator.kf.init_timestamp(time_current);
                 // clear data
                 preprocess.point_deque.clear();
                 preprocess.dense_point_deque.clear();
@@ -78,14 +80,9 @@ namespace small_point_lio {
             return;
         }
 
-        // judge if we should publish odometry, because we want a normal odometry frequency
-        bool is_publish_odometry =
-                !preprocess.imu_deque.empty() &&
-                !preprocess.point_deque.empty() &&
-                preprocess.point_deque.front().timestamp < preprocess.imu_deque.back().timestamp &&
-                preprocess.point_deque.back().timestamp > preprocess.imu_deque.front().timestamp;
-
         // judge we should do point update or imu update
+        bool is_publish_odometry = !preprocess.imu_deque.empty() && !preprocess.dense_point_deque.empty() && !preprocess.point_deque.empty() &&
+                                   preprocess.imu_deque.front().timestamp < preprocess.point_deque.back().timestamp;
         while (!preprocess.imu_deque.empty() && !preprocess.dense_point_deque.empty() && !preprocess.point_deque.empty()) {
             const common::Point &point_lidar_frame = preprocess.point_deque.front();
             const common::Point &dense_point_lidar_frame = preprocess.dense_point_deque.front();
@@ -103,19 +100,18 @@ namespace small_point_lio {
                 preprocess.dense_point_deque.pop_front();
             } else if (point_lidar_frame.timestamp < imu_msg.timestamp) {
                 // point update
+                if (point_lidar_frame.timestamp < time_current) {
+                    preprocess.point_deque.pop_front();
+                    continue;
+                }
                 time_current = point_lidar_frame.timestamp;
 
                 // predict
-                auto dt = static_cast<state::value_type>(time_current - time_predict_last);
-                if (dt > 0) {
-                    // if dt equal 0, don't predict
-                    estimator.kf.predict_state(dt);
-                    time_predict_last = time_current;
-                }
+                estimator.kf.predict_state(time_current);
 
                 // update
                 estimator.point_lidar_frame = point_lidar_frame.position;
-                estimator.kf.update_iterated_point();
+                estimator.kf.update_point();
 
                 // publish odometry
                 if (parameters.publish_odometry_without_downsample) {
@@ -128,41 +124,35 @@ namespace small_point_lio {
                 preprocess.point_deque.pop_front();
             } else {
                 // imu update
+                if (imu_msg.timestamp < time_current) {
+                    preprocess.imu_deque.pop_front();
+                    continue;
+                }
                 time_current = imu_msg.timestamp;
 
                 // predict
-                auto dt = static_cast<state::value_type>(time_current - time_predict_last);
-                if (dt > 0) {
-                    // if dt equal 0, don't predict
-                    estimator.kf.predict_state(dt);
-                    time_predict_last = time_current;
-                }
+                estimator.kf.predict_state(time_current);
+                estimator.kf.predict_cov(time_current, Q);
 
                 // update
                 estimator.angular_velocity = imu_msg.angular_velocity.cast<state::value_type>();
                 estimator.linear_acceleration = imu_msg.linear_acceleration.cast<state::value_type>();
-                auto dt_cov = static_cast<state::value_type>(time_current - time_update_last);
-                time_update_last = time_current;
-                estimator.kf.predict_prop_cov(dt_cov, Q);
-                estimator.kf.update_iterated_imu();
+                estimator.kf.update_imu();
 
                 preprocess.imu_deque.pop_front();
             }
         }
 
-        if (!is_publish_odometry) {
-            return;
-        }
-
-        // publish odometry and pointcloud
-        if (!parameters.publish_odometry_without_downsample) {
-            publish_odometry(time_current);
-        }
-        if (!pointcloud_odom_frame.empty()) {
-            if (pointcloud_callback) {
-                pointcloud_callback(pointcloud_odom_frame);
+        if (is_publish_odometry) {
+            if (!parameters.publish_odometry_without_downsample) {
+                publish_odometry(time_current);
             }
-            pointcloud_odom_frame.clear();
+            if (!pointcloud_odom_frame.empty()) {
+                if (pointcloud_callback) {
+                    pointcloud_callback(pointcloud_odom_frame);
+                }
+                pointcloud_odom_frame.clear();
+            }
         }
     }
 

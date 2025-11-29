@@ -6,7 +6,7 @@
 
 #pragma once
 
-#include <small_point_lio/pch.h>
+#include <pch.h>
 
 namespace small_point_lio {
 
@@ -40,8 +40,8 @@ namespace small_point_lio {
         double acceleration_cov;
         double bg_cov;
         double ba_cov;
-        double plane_thr;
-        double match_s;
+        double plane_threshold;
+        double match_sqaured;
 
         bool publish_odometry_without_downsample = false;
 

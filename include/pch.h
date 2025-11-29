@@ -20,11 +20,15 @@
 #include <vector>
 // Eigen
 #include <Eigen/Core>
+#include <Eigen/Eigenvalues>
 #include <Eigen/Geometry>
 #include <Eigen/Sparse>
-#include <Eigen/Eigenvalues>
 // omp
 #include <omp.h>
+// ankerl
+#include <ankerl/unordered_dense.h>
+// liblzf
+#include <liblzf/lzf.h>
 // ros2
 #include <rclcpp/rclcpp.hpp>
 

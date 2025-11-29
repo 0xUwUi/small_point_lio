@@ -6,11 +6,11 @@
 
 #pragma once
 
-#include "../common/common.h"
+#include "common/common.h"
 #include "estimator.h"
 #include "parameters.h"
 #include "preprocess.h"
-#include <small_point_lio/pch.h>
+#include <pch.h>
 
 namespace small_point_lio {
 
@@ -19,14 +19,14 @@ namespace small_point_lio {
         Parameters parameters;
         Preprocess preprocess;
         Estimator estimator;
-        double time_update_last = 0.0, time_predict_last = 0.0, time_current = 0.0;
+        double time_current = 0.0;
         std::vector<Eigen::Vector3f> pointcloud_odom_frame;
         std::function<void(const std::vector<Eigen::Vector3f> &pointcloud)> pointcloud_callback;
         std::function<void(const common::Odometry &odometry)> odometry_callback;
         bool is_init = false;
 
     public:
-        Eigen::Matrix<state::value_type, 30, 30> Q;
+        Eigen::Matrix<state::value_type, state::DIM, state::DIM> Q;
 
         explicit SmallPointLio(rclcpp::Node &node);
 

@@ -6,8 +6,7 @@
 
 #pragma once
 
-#include "../ankerl/unordered_dense.h"
-#include <small_point_lio/pch.h>
+#include <pch.h>
 
 namespace small_point_lio {
 
@@ -27,6 +26,7 @@ namespace small_point_lio {
 
     class SmallIVox {
     private:
+        ankerl::unordered_dense::map<uint64_t, std::list<Eigen::Vector3f>::iterator> grids_map;
         float inv_resolution;
         size_t capacity;
         std::list<Eigen::Vector3f> grids_cache_;
@@ -39,7 +39,6 @@ namespace small_point_lio {
 
         void get_closest_point(const Eigen::Vector3f &pt, std::vector<Eigen::Vector3f> &closest_pt, size_t max_num = 5);
 
-        ankerl::unordered_dense::map<uint64_t, std::list<Eigen::Vector3f>::iterator> grids_map;
         [[nodiscard]] Eigen::Matrix<uint16_t, 3, 1> get_position_index(const Eigen::Vector3f &pt) const;
     };
 
@@ -119,8 +118,8 @@ namespace small_point_lio {
             }
             std::nth_element(candidates.begin(), candidates.begin() + static_cast<std::ptrdiff_t>(max_num) - 1, candidates.end());
             closest_pt.clear();
-            for (auto &it: candidates) {
-                closest_pt.push_back(it.point);
+            for (size_t i = 0; i < max_num; ++i) {
+                closest_pt.push_back(candidates[i].point);
             }
         }
     }
