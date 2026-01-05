@@ -38,6 +38,8 @@ namespace small_point_lio {
         rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr map_save_trigger;
         common::Odometry last_odometry;
         std::unique_ptr<util::PointcloudMapping> pointcloud_mapping;
+        
+        rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr lidar_raw_publisher;
 
     public:
         explicit SmallPointLioNode(const rclcpp::NodeOptions &options);
