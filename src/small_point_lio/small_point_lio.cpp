@@ -81,24 +81,13 @@ namespace small_point_lio {
         }
 
         // judge we should do point update or imu update
-        bool is_publish_odometry = !preprocess.imu_deque.empty() && !preprocess.dense_point_deque.empty() && !preprocess.point_deque.empty() &&
+        // 仅要求 IMU 队列和经过空间过滤的点队列非空即可发布
+        bool is_publish_odometry = !preprocess.imu_deque.empty() && !preprocess.point_deque.empty() &&
                                    preprocess.imu_deque.front().timestamp < preprocess.point_deque.back().timestamp;
-        while (!preprocess.imu_deque.empty() && !preprocess.dense_point_deque.empty() && !preprocess.point_deque.empty()) {
+        while (!preprocess.imu_deque.empty() && !preprocess.point_deque.empty()) {
             const common::Point &point_lidar_frame = preprocess.point_deque.front();
-            const common::Point &dense_point_lidar_frame = preprocess.dense_point_deque.front();
             const common::ImuMsg &imu_msg = preprocess.imu_deque.front();
-            if (dense_point_lidar_frame.timestamp < point_lidar_frame.timestamp && dense_point_lidar_frame.timestamp < imu_msg.timestamp) {
-                // collect odom frame pointcloud
-                Eigen::Matrix<state::value_type, 3, 1> dense_point_imu_frame;
-                if (parameters.extrinsic_est_en) {
-                    dense_point_imu_frame = estimator.kf.x.offset_R_L_I * dense_point_lidar_frame.position.cast<state::value_type>() + estimator.kf.x.offset_T_L_I;
-                } else {
-                    dense_point_imu_frame = estimator.Lidar_R_wrt_IMU * dense_point_lidar_frame.position.cast<state::value_type>() + estimator.Lidar_T_wrt_IMU;
-                }
-                pointcloud_odom_frame.emplace_back((estimator.kf.x.rotation * dense_point_imu_frame + estimator.kf.x.position).cast<float>());
-
-                preprocess.dense_point_deque.pop_front();
-            } else if (point_lidar_frame.timestamp < imu_msg.timestamp) {
+            if (point_lidar_frame.timestamp < imu_msg.timestamp) {
                 // point update
                 if (point_lidar_frame.timestamp < time_current) {
                     preprocess.point_deque.pop_front();
@@ -120,6 +109,15 @@ namespace small_point_lio {
 
                 // map incremental
                 estimator.ivox->add_point(estimator.point_odom_frame);
+
+                // collect odom frame pointcloud 使用已经过滤/下采样过的点
+                Eigen::Matrix<state::value_type, 3, 1> point_imu_frame;
+                if (parameters.extrinsic_est_en) {
+                    point_imu_frame = estimator.kf.x.offset_R_L_I * point_lidar_frame.position.cast<state::value_type>() + estimator.kf.x.offset_T_L_I;
+                } else {
+                    point_imu_frame = estimator.Lidar_R_wrt_IMU * point_lidar_frame.position.cast<state::value_type>() + estimator.Lidar_T_wrt_IMU;
+                }
+                pointcloud_odom_frame.emplace_back((estimator.kf.x.rotation * point_imu_frame + estimator.kf.x.position).cast<float>());
 
                 preprocess.point_deque.pop_front();
             } else {
