@@ -20,8 +20,7 @@ namespace small_point_lio {
         Preprocess preprocess;
         Estimator estimator;
         double time_current = 0.0;
-    // 由过滤后的点（point_deque）生成的里程计坐标系点云，用于对外发布/保存
-    std::vector<Eigen::Vector3f> pointcloud_odom_frame;
+        std::vector<Eigen::Vector3f> pointcloud_odom_frame;
         std::function<void(const std::vector<Eigen::Vector3f> &pointcloud)> pointcloud_callback;
         std::function<void(const common::Odometry &odometry)> odometry_callback;
         bool is_init = false;

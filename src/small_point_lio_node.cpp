@@ -33,9 +33,8 @@ namespace small_point_lio {
         std::string lidar_frame = declare_parameter<std::string>("lidar_frame");
         bool save_pcd = declare_parameter<bool>("save_pcd");
         small_point_lio = std::make_unique<small_point_lio::SmallPointLio>(*this);
-        odometry_publisher = create_publisher<nav_msgs::msg::Odometry>("Odometry", 1000);
+        odometry_publisher = create_publisher<nav_msgs::msg::Odometry>("odometry", 1000);
         pointcloud_publisher = create_publisher<sensor_msgs::msg::PointCloud2>("registered_scan", 1000);
-        lidar_raw_publisher = create_publisher<sensor_msgs::msg::PointCloud2>("body_cloud", 1000);
         tf_broadcaster = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
         tf_buffer = std::make_unique<tf2_ros::Buffer>(get_clock());
         tf_listener = std::make_shared<tf2_ros::TransformListener>(*tf_buffer);
@@ -165,14 +164,8 @@ namespace small_point_lio {
                 }
                 
                 sensor_msgs::msg::PointCloud2 msg;
-                sensor_msgs::msg::PointCloud2 msg_raw;
-                
                 msg.header.stamp = time_msg;
-                msg_raw.header.stamp = time_msg; 
-                
                 msg.header.frame_id = "odom";
-                msg_raw.header.frame_id = "body";
-
                 msg.width = pointcloud.size();
                 msg.height = 1;
                 msg.fields.reserve(4);
@@ -203,28 +196,6 @@ namespace small_point_lio {
                 msg.data.resize(msg.row_step * msg.height);
                 Eigen::Vector3f transformed_point;
                 auto pointer = reinterpret_cast<float *>(msg.data.data());
-
-                msg_raw.width = pointcloud.size();
-                msg_raw.height = 1;
-                msg_raw.is_bigendian = false;
-                msg_raw.is_dense = false;
-                msg_raw.point_step = 16;
-                msg_raw.row_step = msg_raw.width * msg_raw.point_step;
-                msg_raw.fields.reserve(4);
-                
-                //设置字段 (x, y, z, intensity)
-                field.name = "x"; field.offset = 0; field.datatype = sensor_msgs::msg::PointField::FLOAT32; field.count = 1;
-                msg_raw.fields.push_back(field);
-                field.name = "y"; field.offset = 4; field.datatype = sensor_msgs::msg::PointField::FLOAT32; field.count = 1;
-                msg_raw.fields.push_back(field);
-                field.name = "z"; field.offset = 8; field.datatype = sensor_msgs::msg::PointField::FLOAT32; field.count = 1;
-                msg_raw.fields.push_back(field);
-                field.name = "intensity"; field.offset = 12; field.datatype = sensor_msgs::msg::PointField::FLOAT32; field.count = 1;
-                msg_raw.fields.push_back(field);
-                // 分配内存
-                msg_raw.data.resize(msg_raw.row_step * msg_raw.height);
-
-
                 for (const auto &point: pointcloud) {
                     transformed_point = lidar_frame_to_base_link_R * point + lidar_frame_to_base_link_T;
                     *pointer = transformed_point.x();
@@ -238,20 +209,6 @@ namespace small_point_lio {
                 }
                 msg.is_dense = false;
                 pointcloud_publisher->publish(msg);
-
-
-                auto pointer_raw = reinterpret_cast<float *>(msg_raw.data.data());
-                for (const auto &point: pointcloud) {
-                    // 直接读取原始坐标，不乘任何矩阵
-                    *pointer_raw = point.x(); pointer_raw++;
-                    *pointer_raw = point.y(); pointer_raw++;
-                    *pointer_raw = point.z(); pointer_raw++;
-                    
-                    // 强度 (保持为0，或者如果你有点的强度数据，可以在这里赋值)
-                    *pointer_raw = 0; pointer_raw++; 
-                }
-                lidar_raw_publisher->publish(msg_raw);
-
             }
             if (save_pcd) {
                 for (const auto &point: pointcloud) {
