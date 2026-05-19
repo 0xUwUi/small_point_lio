@@ -73,7 +73,6 @@ namespace small_point_lio {
                 estimator.kf.init_timestamp(time_current);
                 // clear data
                 preprocess.point_deque.clear();
-                preprocess.dense_point_deque.clear();
                 preprocess.imu_deque.clear();
                 is_init = true;
             }
@@ -84,6 +83,7 @@ namespace small_point_lio {
         // 仅要求 IMU 队列和经过空间过滤的点队列非空即可发布
         bool is_publish_odometry = !preprocess.imu_deque.empty() && !preprocess.point_deque.empty() &&
                                    preprocess.imu_deque.front().timestamp < preprocess.point_deque.back().timestamp;
+        size_t imu_process_count = 0;
         while (!preprocess.imu_deque.empty() && !preprocess.point_deque.empty()) {
             const common::Point &point_lidar_frame = preprocess.point_deque.front();
             const common::ImuMsg &imu_msg = preprocess.imu_deque.front();
@@ -138,6 +138,10 @@ namespace small_point_lio {
                 estimator.kf.update_imu();
 
                 preprocess.imu_deque.pop_front();
+                ++imu_process_count;
+                if (imu_process_count >= parameters.max_imu_process_per_handle) {
+                    break;
+                }
             }
         }
 

@@ -26,6 +26,8 @@ namespace small_point_lio {
         satu_acc = node.declare_parameter<double>("satu_acc") * 0.99;
         satu_gyro = node.declare_parameter<double>("satu_gyro") * 0.99;
         acc_norm = node.declare_parameter<double>("acc_norm");
+        const auto max_imu_process = node.declare_parameter<long>("max_imu_process_per_handle", 200);
+        max_imu_process_per_handle = static_cast<size_t>(std::max<long>(1, max_imu_process));
 
         // 地图
         map_resolution = node.declare_parameter<float>("map_resolution");

@@ -16,16 +16,13 @@ namespace small_point_lio {
     public:
         Parameters *parameters = nullptr;
         std::deque<common::Point> point_deque;
-        std::deque<common::Point> dense_point_deque;
         std::deque<common::ImuMsg> imu_deque;
 
     private:
         double last_timestamp_lidar = -1;
-        double last_timestamp_dense_point = -1;
         double last_timestamp_imu = -1;
         util::VoxelgridSampling downsampler;
         std::vector<common::Point> filtered_points;
-        std::vector<common::Point> dense_points;
         std::vector<common::Point> processed_pointcloud;
 
     public:
