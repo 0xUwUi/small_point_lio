@@ -34,20 +34,50 @@ namespace small_point_lio {
     }
 
     void SmallPointLio::on_point_cloud_callback(const std::vector<common::Point> &pointcloud) {
+        static const auto logger = rclcpp::get_logger("small_point_lio");
+        static rclcpp::Clock clock(RCL_STEADY_TIME);
+        RCLCPP_INFO_THROTTLE(
+                logger, clock, 1000,
+                "[DEBUG-splio-a4f2] splio point callback begin input=%zu point_queue=%zu dense_queue=%zu imu_queue=%zu",
+                pointcloud.size(), preprocess.point_deque.size(), preprocess.dense_point_deque.size(), preprocess.imu_deque.size());
         preprocess.on_point_cloud_callback(pointcloud);
+        RCLCPP_INFO_THROTTLE(
+                logger, clock, 1000,
+                "[DEBUG-splio-a4f2] splio point callback end input=%zu point_queue=%zu dense_queue=%zu imu_queue=%zu",
+                pointcloud.size(), preprocess.point_deque.size(), preprocess.dense_point_deque.size(), preprocess.imu_deque.size());
     }
 
     void SmallPointLio::on_imu_callback(const common::ImuMsg &imu_msg) {
+        static const auto logger = rclcpp::get_logger("small_point_lio");
+        static rclcpp::Clock clock(RCL_STEADY_TIME);
+        RCLCPP_INFO_THROTTLE(
+                logger, clock, 1000,
+                "[DEBUG-splio-a4f2] splio imu callback begin stamp=%.9f imu_queue=%zu",
+                imu_msg.timestamp, preprocess.imu_deque.size());
         preprocess.on_imu_callback(imu_msg);
+        RCLCPP_INFO_THROTTLE(
+                logger, clock, 1000,
+                "[DEBUG-splio-a4f2] splio imu callback end stamp=%.9f imu_queue=%zu",
+                imu_msg.timestamp, preprocess.imu_deque.size());
     }
 
     void SmallPointLio::handle_once() {
         static const auto logger = rclcpp::get_logger("small_point_lio");
+        static rclcpp::Clock clock(RCL_STEADY_TIME);
+        RCLCPP_INFO_THROTTLE(
+                logger, clock, 1000,
+                "[DEBUG-splio-a4f2] handle_once enter is_init=%s point_queue=%zu dense_queue=%zu imu_queue=%zu init_map_size=%zu fix_gravity=%s",
+                is_init ? "true" : "false", preprocess.point_deque.size(), preprocess.dense_point_deque.size(), preprocess.imu_deque.size(),
+                parameters.init_map_size, parameters.fix_gravity_direction ? "true" : "false");
         // we need to init small point lio
         if (!is_init) {
             if ((!preprocess.point_deque.empty() || !preprocess.imu_deque.empty()) &&
                 preprocess.point_deque.size() >= parameters.init_map_size &&
                 (!parameters.fix_gravity_direction || preprocess.imu_deque.size() >= 200)) {
+                RCLCPP_INFO(
+                        logger,
+                        "[DEBUG-splio-a4f2] init begin point_queue=%zu dense_queue=%zu imu_queue=%zu",
+                        preprocess.point_deque.size(), preprocess.dense_point_deque.size(), preprocess.imu_deque.size());
                 // init map
                 for (const auto &point: preprocess.point_deque) {
                     estimator.ivox->add_point(point.position);
@@ -78,6 +108,13 @@ namespace small_point_lio {
                 preprocess.dense_point_deque.clear();
                 preprocess.imu_deque.clear();
                 is_init = true;
+                RCLCPP_INFO(logger, "[DEBUG-splio-a4f2] init done time_current=%.9f", time_current);
+            } else {
+                RCLCPP_INFO_THROTTLE(
+                        logger, clock, 1000,
+                        "[DEBUG-splio-a4f2] init waiting point_queue=%zu dense_queue=%zu imu_queue=%zu need_points=%zu need_imu=%s",
+                        preprocess.point_deque.size(), preprocess.dense_point_deque.size(), preprocess.imu_deque.size(),
+                        parameters.init_map_size, parameters.fix_gravity_direction ? "200" : "0");
             }
             return;
         }
@@ -86,6 +123,10 @@ namespace small_point_lio {
         bool is_publish_odometry = !preprocess.imu_deque.empty() && !preprocess.dense_point_deque.empty() && !preprocess.point_deque.empty() &&
                                    preprocess.imu_deque.front().timestamp < preprocess.point_deque.back().timestamp;
         const auto loop_start_time = std::chrono::steady_clock::now();
+        RCLCPP_INFO_THROTTLE(
+                logger, clock, 1000,
+                "[DEBUG-splio-a4f2] process while begin point_queue=%zu dense_queue=%zu imu_queue=%zu",
+                preprocess.point_deque.size(), preprocess.dense_point_deque.size(), preprocess.imu_deque.size());
         while (!preprocess.imu_deque.empty() && !preprocess.dense_point_deque.empty() && !preprocess.point_deque.empty()) {
             const common::Point &point_lidar_frame = preprocess.point_deque.front();
             const common::Point &dense_point_lidar_frame = preprocess.dense_point_deque.front();
@@ -148,7 +189,11 @@ namespace small_point_lio {
 
         const auto loop_end_time = std::chrono::steady_clock::now();
         const auto loop_cost_ms = std::chrono::duration_cast<std::chrono::microseconds>(loop_end_time - loop_start_time).count() / 1000.0;
-        RCLCPP_INFO(logger, "small_point_lio while loop cost: %.3f ms", loop_cost_ms);
+        RCLCPP_INFO_THROTTLE(
+                logger, clock, 1000,
+                "[DEBUG-splio-a4f2] process while end point_queue=%zu dense_queue=%zu imu_queue=%zu loop_cost_ms=%.3f publish=%s",
+                preprocess.point_deque.size(), preprocess.dense_point_deque.size(), preprocess.imu_deque.size(), loop_cost_ms,
+                is_publish_odometry ? "true" : "false");
 
         if (is_publish_odometry) {
             if (!parameters.publish_odometry_without_downsample) {

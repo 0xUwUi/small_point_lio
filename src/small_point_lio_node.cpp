@@ -10,6 +10,7 @@
 #include "lidar_adapter/livox_custom_msg.h"
 #include "lidar_adapter/livox_pointcloud2.h"
 #include "lidar_adapter/unitree_lidar.h"
+#include <chrono>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <mutex>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
@@ -32,6 +33,10 @@ namespace small_point_lio {
         std::string lidar_type = declare_parameter<std::string>("lidar_type");
         std::string lidar_frame = declare_parameter<std::string>("lidar_frame");
         bool save_pcd = declare_parameter<bool>("save_pcd");
+        RCLCPP_INFO(
+                get_logger(),
+                "[DEBUG-splio-a4f2] node ctor lidar_topic=%s imu_topic=%s lidar_type=%s lidar_frame=%s save_pcd=%s",
+                lidar_topic.c_str(), imu_topic.c_str(), lidar_type.c_str(), lidar_frame.c_str(), save_pcd ? "true" : "false");
         small_point_lio = std::make_unique<small_point_lio::SmallPointLio>(*this);
         odometry_publisher = create_publisher<nav_msgs::msg::Odometry>("odometry", 1000);
         pointcloud_publisher = create_publisher<sensor_msgs::msg::PointCloud2>("registered_scan", 1000);
@@ -245,21 +250,57 @@ namespace small_point_lio {
             rclcpp::shutdown();
             return;
         }
+        RCLCPP_INFO(get_logger(), "[DEBUG-splio-a4f2] subscriptions setup begin");
         lidar_adapter->setup_subscription(this, lidar_topic, [this](const std::vector<common::Point> &pointcloud) {
+            const auto start_time = std::chrono::steady_clock::now();
+            RCLCPP_INFO_THROTTLE(
+                    get_logger(), *get_clock(), 1000,
+                    "[DEBUG-splio-a4f2] node lidar callback enter points=%zu",
+                    pointcloud.size());
             small_point_lio->on_point_cloud_callback(pointcloud);
+            const auto preprocess_cost_ms = std::chrono::duration_cast<std::chrono::microseconds>(
+                                                    std::chrono::steady_clock::now() - start_time)
+                                                    .count() /
+                                            1000.0;
+            RCLCPP_INFO_THROTTLE(
+                    get_logger(), *get_clock(), 1000,
+                    "[DEBUG-splio-a4f2] node lidar callback after preprocess points=%zu preprocess_cost_ms=%.3f",
+                    pointcloud.size(), preprocess_cost_ms);
             small_point_lio->handle_once();
+            const auto total_cost_ms = std::chrono::duration_cast<std::chrono::microseconds>(
+                                               std::chrono::steady_clock::now() - start_time)
+                                               .count() /
+                                       1000.0;
+            RCLCPP_INFO_THROTTLE(
+                    get_logger(), *get_clock(), 1000,
+                    "[DEBUG-splio-a4f2] node lidar callback exit points=%zu total_cost_ms=%.3f",
+                    pointcloud.size(), total_cost_ms);
         });
         imu_subsciber = create_subscription<sensor_msgs::msg::Imu>(
                 imu_topic,
                 rclcpp::SensorDataQoS(),
                 [this](const sensor_msgs::msg::Imu &msg) {
+                    const auto start_time = std::chrono::steady_clock::now();
+                    RCLCPP_INFO_THROTTLE(
+                            get_logger(), *get_clock(), 1000,
+                            "[DEBUG-splio-a4f2] node imu callback enter stamp=%.9f",
+                            msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9);
                     common::ImuMsg imu_msg;
                     imu_msg.angular_velocity = Eigen::Vector3d(msg.angular_velocity.x, msg.angular_velocity.y, msg.angular_velocity.z);
                     imu_msg.linear_acceleration = Eigen::Vector3d(msg.linear_acceleration.x, msg.linear_acceleration.y, msg.linear_acceleration.z);
                     imu_msg.timestamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9;
                     small_point_lio->on_imu_callback(imu_msg);
                     small_point_lio->handle_once();
+                    const auto total_cost_ms = std::chrono::duration_cast<std::chrono::microseconds>(
+                                                       std::chrono::steady_clock::now() - start_time)
+                                                       .count() /
+                                               1000.0;
+                    RCLCPP_INFO_THROTTLE(
+                            get_logger(), *get_clock(), 1000,
+                            "[DEBUG-splio-a4f2] node imu callback exit total_cost_ms=%.3f",
+                            total_cost_ms);
                 });
+        RCLCPP_INFO(get_logger(), "[DEBUG-splio-a4f2] subscriptions setup done");
     }
 
 }// namespace small_point_lio
