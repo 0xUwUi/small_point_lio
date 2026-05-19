@@ -5,6 +5,7 @@
  */
 
 #include "small_point_lio.h"
+#include <chrono>
 
 namespace small_point_lio {
 
@@ -41,6 +42,7 @@ namespace small_point_lio {
     }
 
     void SmallPointLio::handle_once() {
+        static const auto logger = rclcpp::get_logger("small_point_lio");
         // we need to init small point lio
         if (!is_init) {
             if ((!preprocess.point_deque.empty() || !preprocess.imu_deque.empty()) &&
@@ -83,6 +85,7 @@ namespace small_point_lio {
         // judge we should do point update or imu update
         bool is_publish_odometry = !preprocess.imu_deque.empty() && !preprocess.dense_point_deque.empty() && !preprocess.point_deque.empty() &&
                                    preprocess.imu_deque.front().timestamp < preprocess.point_deque.back().timestamp;
+        const auto loop_start_time = std::chrono::steady_clock::now();
         while (!preprocess.imu_deque.empty() && !preprocess.dense_point_deque.empty() && !preprocess.point_deque.empty()) {
             const common::Point &point_lidar_frame = preprocess.point_deque.front();
             const common::Point &dense_point_lidar_frame = preprocess.dense_point_deque.front();
@@ -142,6 +145,10 @@ namespace small_point_lio {
                 preprocess.imu_deque.pop_front();
             }
         }
+
+        const auto loop_end_time = std::chrono::steady_clock::now();
+        const auto loop_cost_ms = std::chrono::duration_cast<std::chrono::microseconds>(loop_end_time - loop_start_time).count() / 1000.0;
+        RCLCPP_INFO(logger, "small_point_lio while loop cost: %.3f ms", loop_cost_ms);
 
         if (is_publish_odometry) {
             if (!parameters.publish_odometry_without_downsample) {
