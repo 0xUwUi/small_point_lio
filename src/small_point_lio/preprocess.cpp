@@ -25,7 +25,9 @@ namespace small_point_lio {
         filtered_points.reserve(pointcloud.size());
         for (size_t i = 0; i < pointcloud.size(); i++) {
             const auto &point = pointcloud[i];
-            if (point.timestamp >= last_timestamp_dense_point) {
+            float dist = point.position.squaredNorm();
+            bool is_in_distance_range = dist >= parameters->min_distance_squared && dist <= parameters->max_distance_squared;
+            if (point.timestamp >= last_timestamp_dense_point && is_in_distance_range) {
                 dense_points.push_back(point);
             }
             if (i % parameters->point_filter_num != 0) {
@@ -34,8 +36,7 @@ namespace small_point_lio {
             if (point.timestamp < last_timestamp_lidar) {
                 continue;
             }
-            float dist = point.position.squaredNorm();
-            if (dist < parameters->min_distance_squared || dist > parameters->max_distance_squared) {
+            if (!is_in_distance_range) {
                 continue;
             }
             filtered_points.push_back(point);
