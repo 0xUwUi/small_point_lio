@@ -153,7 +153,19 @@ namespace small_point_lio {
             odometry_msg.twist.twist.angular.y = angular_velocity_base.y();
             odometry_msg.twist.twist.angular.z = angular_velocity_base.z();
 
+
+            geometry_msgs::msg::TransformStamped position_only_transform;
+            position_only_transform.header = transform_stamped.header;
+            position_only_transform.child_frame_id = "base_link";
+            position_only_transform.transform.translation = transform_stamped.transform.translation;
+            // Keep the position-only frame aligned with camera_init while following body's position.
+            position_only_transform.transform.rotation.x = 0.0;
+            position_only_transform.transform.rotation.y = 0.0;
+            position_only_transform.transform.rotation.z = 0.0;
+            position_only_transform.transform.rotation.w = 1.0;
+
             tf_broadcaster->sendTransform(transform_stamped);
+            tf_broadcaster->sendTransform(position_only_transform);
             odometry_publisher->publish(odometry_msg);
         });
         small_point_lio->set_pointcloud_callback([this, save_pcd, lidar_frame, transform_cache, init_transform_cache](const std::vector<Eigen::Vector3f> &pointcloud) {
