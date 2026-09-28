@@ -19,10 +19,11 @@ namespace small_point_lio {
     struct TransformCache {
         std::mutex mutex;
         bool has_transform{false};
-        tf2::Transform base_link_to_lidar;
-        tf2::Transform lidar_to_base;
-        Eigen::Matrix3f lidar_to_base_R = Eigen::Matrix3f::Identity();
-        Eigen::Vector3f lidar_to_base_T = Eigen::Vector3f::Zero();
+        // Estimator outputs IMU pose (T_WI); world W is the IMU frame at init.
+        tf2::Transform base_to_imu;// T_B_I
+        tf2::Transform imu_to_base;// T_I_B
+        Eigen::Matrix3f base_to_imu_R = Eigen::Matrix3f::Identity();
+        Eigen::Vector3f base_to_imu_T = Eigen::Vector3f::Zero();
     };
 
     SmallPointLioNode::SmallPointLioNode(const rclcpp::NodeOptions &options)
@@ -59,26 +60,41 @@ namespace small_point_lio {
                         RCLCPP_INFO(rclcpp::get_logger("small_point_lio"), "save pcd success");
                     }).detach();
                 });
+        // Lidar -> IMU extrinsic (p_I = R * p_L + T), already declared by Parameters.
+        const std::vector<double> extrinsic_T = get_parameter("extrinsic_T").as_double_array();
+        const std::vector<double> extrinsic_R = get_parameter("extrinsic_R").as_double_array();
+        tf2::Transform imu_to_lidar;// T_I_L
+        imu_to_lidar.setBasis(tf2::Matrix3x3(
+                extrinsic_R[0], extrinsic_R[1], extrinsic_R[2],
+                extrinsic_R[3], extrinsic_R[4], extrinsic_R[5],
+                extrinsic_R[6], extrinsic_R[7], extrinsic_R[8]));
+        imu_to_lidar.setOrigin(tf2::Vector3(extrinsic_T[0], extrinsic_T[1], extrinsic_T[2]));
+
         auto transform_cache = std::make_shared<TransformCache>();
-        auto init_transform_cache = [this, lidar_frame, transform_cache](const builtin_interfaces::msg::Time &time_msg) {
+        auto init_transform_cache = [this, lidar_frame, transform_cache, imu_to_lidar](const builtin_interfaces::msg::Time &time_msg) {
             std::lock_guard<std::mutex> lock(transform_cache->mutex);
             if (transform_cache->has_transform) {
                 return true;
             }
             try {
-                auto base_link_to_lidar_frame_transform = tf_buffer->lookupTransform(lidar_frame, "base_footprint", time_msg);
-                tf2::fromMsg(base_link_to_lidar_frame_transform.transform, transform_cache->base_link_to_lidar);
-                transform_cache->lidar_to_base = transform_cache->base_link_to_lidar.inverse();
-                transform_cache->lidar_to_base_R = Eigen::Quaternionf(
-                        static_cast<float>(transform_cache->lidar_to_base.getRotation().getW()),
-                        static_cast<float>(transform_cache->lidar_to_base.getRotation().getX()),
-                        static_cast<float>(transform_cache->lidar_to_base.getRotation().getY()),
-                        static_cast<float>(transform_cache->lidar_to_base.getRotation().getZ()))
+                // lookupTransform(target=lidar, source=base) gives T_L_B
+                auto lidar_to_base_msg = tf_buffer->lookupTransform(lidar_frame, "base_footprint", time_msg);
+                tf2::Transform lidar_to_base;
+                tf2::fromMsg(lidar_to_base_msg.transform, lidar_to_base);
+                // T_B_I = T_B_L * T_L_I
+                transform_cache->base_to_imu = lidar_to_base.inverse() * imu_to_lidar.inverse();
+                transform_cache->imu_to_base = transform_cache->base_to_imu.inverse();
+                const tf2::Quaternion q = transform_cache->base_to_imu.getRotation();
+                transform_cache->base_to_imu_R = Eigen::Quaternionf(
+                        static_cast<float>(q.getW()),
+                        static_cast<float>(q.getX()),
+                        static_cast<float>(q.getY()),
+                        static_cast<float>(q.getZ()))
                         .toRotationMatrix();
-                transform_cache->lidar_to_base_T <<
-                        static_cast<float>(transform_cache->lidar_to_base.getOrigin().getX()),
-                        static_cast<float>(transform_cache->lidar_to_base.getOrigin().getY()),
-                        static_cast<float>(transform_cache->lidar_to_base.getOrigin().getZ());
+                const tf2::Vector3 &t = transform_cache->base_to_imu.getOrigin();
+                transform_cache->base_to_imu_T << static_cast<float>(t.getX()),
+                        static_cast<float>(t.getY()),
+                        static_cast<float>(t.getZ());
                 transform_cache->has_transform = true;
                 RCLCPP_INFO(rclcpp::get_logger("small_point_lio"), "cached base_footprint <-> %s transform", lidar_frame.c_str());
                 return true;
@@ -105,15 +121,20 @@ namespace small_point_lio {
                 return;
             }
             
-            tf2::Transform tf_lidar_odom_to_lidar_frame;
-            tf_lidar_odom_to_lidar_frame.setOrigin(tf2::Vector3(odometry.position.x(), odometry.position.y(), odometry.position.z()));
-            tf_lidar_odom_to_lidar_frame.setRotation(tf2::Quaternion(odometry.orientation.x(), odometry.orientation.y(), odometry.orientation.z(), odometry.orientation.w()));
-            tf2::Transform tf_odom_to_base_link;
+            // Estimator pose is T_WI (IMU in world frame W = IMU frame at init)
+            tf2::Transform world_to_imu;
+            world_to_imu.setOrigin(tf2::Vector3(odometry.position.x(), odometry.position.y(), odometry.position.z()));
+            world_to_imu.setRotation(tf2::Quaternion(odometry.orientation.x(), odometry.orientation.y(), odometry.orientation.z(), odometry.orientation.w()));
+            tf2::Transform base_to_imu;
+            tf2::Transform imu_to_base;
             {
                 std::lock_guard<std::mutex> lock(transform_cache->mutex);
-                tf_odom_to_base_link = transform_cache->base_link_to_lidar.inverse() * tf_lidar_odom_to_lidar_frame * transform_cache->base_link_to_lidar;
+                base_to_imu = transform_cache->base_to_imu;
+                imu_to_base = transform_cache->imu_to_base;
             }
-            transform_stamped.transform = tf2::toMsg(tf_odom_to_base_link);
+            // T_odom_base = T_B_I * T_WI * T_I_B
+            const tf2::Transform odom_to_base = base_to_imu * world_to_imu * imu_to_base;
+            transform_stamped.transform = tf2::toMsg(odom_to_base);
 
             nav_msgs::msg::Odometry odometry_msg;
             odometry_msg.header.stamp = time_msg;
@@ -128,24 +149,15 @@ namespace small_point_lio {
             odometry_msg.pose.pose.orientation.z = transform_stamped.transform.rotation.z;
             odometry_msg.pose.pose.orientation.w = transform_stamped.transform.rotation.w;
 
-            // Convert estimator twist from lidar frame to base_footprint frame before publishing.
-            tf2::Vector3 linear_velocity_lidar(
-                    static_cast<double>(odometry.velocity.x()),
-                    static_cast<double>(odometry.velocity.y()),
-                    static_cast<double>(odometry.velocity.z()));
-            tf2::Vector3 angular_velocity_lidar(
-                    static_cast<double>(odometry.angular_velocity.x()),
-                    static_cast<double>(odometry.angular_velocity.y()),
-                    static_cast<double>(odometry.angular_velocity.z()));
-            tf2::Vector3 linear_velocity_base;
-            tf2::Vector3 angular_velocity_base;
-            {
-                std::lock_guard<std::mutex> lock(transform_cache->mutex);
-                const tf2::Vector3 base_origin_in_lidar = transform_cache->base_link_to_lidar.getOrigin();
-                const tf2::Matrix3x3 lidar_to_base_rotation(transform_cache->lidar_to_base.getRotation());
-                linear_velocity_base = lidar_to_base_rotation * (linear_velocity_lidar + angular_velocity_lidar.cross(base_origin_in_lidar));
-                angular_velocity_base = lidar_to_base_rotation * angular_velocity_lidar;
-            }
+            // Estimator velocity is expressed in world frame W, angular velocity in IMU body frame.
+            // Twist must be expressed in child frame (base_footprint).
+            const tf2::Vector3 linear_velocity_world(odometry.velocity.x(), odometry.velocity.y(), odometry.velocity.z());
+            const tf2::Vector3 angular_velocity_imu(odometry.angular_velocity.x(), odometry.angular_velocity.y(), odometry.angular_velocity.z());
+            const tf2::Vector3 linear_velocity_imu = world_to_imu.getBasis().transpose() * linear_velocity_world;
+            const tf2::Vector3 base_origin_in_imu = imu_to_base.getOrigin();
+            const tf2::Matrix3x3 &base_to_imu_rotation = base_to_imu.getBasis();
+            const tf2::Vector3 linear_velocity_base = base_to_imu_rotation * (linear_velocity_imu + angular_velocity_imu.cross(base_origin_in_imu));
+            const tf2::Vector3 angular_velocity_base = base_to_imu_rotation * angular_velocity_imu;
             odometry_msg.twist.twist.linear.x = linear_velocity_base.x();
             odometry_msg.twist.twist.linear.y = linear_velocity_base.y();
             odometry_msg.twist.twist.linear.z = linear_velocity_base.z();
@@ -156,7 +168,7 @@ namespace small_point_lio {
 
             geometry_msgs::msg::TransformStamped position_only_transform;
             position_only_transform.header = transform_stamped.header;
-            position_only_transform.child_frame_id = "base_link";
+            position_only_transform.child_frame_id = "base_link_position_only";
             position_only_transform.transform.translation = transform_stamped.transform.translation;
             // Keep the position-only frame aligned with camera_init while following body's position.
             position_only_transform.transform.rotation.x = 0.0;
@@ -177,12 +189,13 @@ namespace small_point_lio {
                 if (!init_transform_cache(time_msg)) {
                     return;
                 }
-                Eigen::Vector3f lidar_frame_to_base_link_T;
-                Eigen::Matrix3f lidar_frame_to_base_link_R;
+                // Points are in world frame W (IMU at init): p_odom = R_BI * p_W + t_BI
+                Eigen::Vector3f base_to_imu_T;
+                Eigen::Matrix3f base_to_imu_R;
                 {
                     std::lock_guard<std::mutex> lock(transform_cache->mutex);
-                    lidar_frame_to_base_link_T = transform_cache->lidar_to_base_T;
-                    lidar_frame_to_base_link_R = transform_cache->lidar_to_base_R;
+                    base_to_imu_T = transform_cache->base_to_imu_T;
+                    base_to_imu_R = transform_cache->base_to_imu_R;
                 }
                 
                 sensor_msgs::msg::PointCloud2 msg;
@@ -219,7 +232,7 @@ namespace small_point_lio {
                 Eigen::Vector3f transformed_point;
                 auto pointer = reinterpret_cast<float *>(msg.data.data());
                 for (const auto &point: pointcloud) {
-                    transformed_point = lidar_frame_to_base_link_R * point + lidar_frame_to_base_link_T;
+                    transformed_point = base_to_imu_R * point + base_to_imu_T;
                     *pointer = transformed_point.x();
                     ++pointer;
                     *pointer = transformed_point.y();
